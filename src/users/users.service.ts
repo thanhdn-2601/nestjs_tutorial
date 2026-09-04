@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { Repository } from 'typeorm';
+import { CreateUserDto } from './dto/create-user.dto';
 import { User } from './user.entity';
 
 @Injectable()
@@ -24,14 +27,16 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { id } });
   }
 
-  create(data: {
-    username: string;
-    email: string;
-    password: string;
-  }): Promise<User> {
+  async create(data: CreateUserDto): Promise<User> {
+    const dto = plainToInstance(CreateUserDto, data);
+    const errors = await validate(dto);
+    if (errors.length) {
+      throw new UnprocessableEntityException(errors);
+    }
+
     const user = this.usersRepository.create({
-      ...data,
-      email: data.email.toLowerCase(),
+      ...dto,
+      email: dto.email.toLowerCase(),
     });
     return this.usersRepository.save(user);
   }

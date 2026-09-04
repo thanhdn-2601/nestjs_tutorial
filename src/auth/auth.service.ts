@@ -11,11 +11,11 @@ import { QueryFailedError } from 'typeorm';
 import { RedisService } from '../redis/redis.service';
 import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
+import { PASSWORD_SALT_ROUNDS } from './password.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './jwt-payload.interface';
 
-const SALT_ROUNDS = 10;
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
 export interface UserResponse {
@@ -51,7 +51,10 @@ export class AuthService {
       throw new UnprocessableEntityException({ errors });
     }
 
-    const hashedPassword = await bcrypt.hash(user.password, SALT_ROUNDS);
+    const hashedPassword = await bcrypt.hash(
+      user.password,
+      PASSWORD_SALT_ROUNDS,
+    );
     try {
       const created = await this.usersService.create({
         username: user.username,
