@@ -27,6 +27,32 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { id } });
   }
 
+  findConflicts(
+    criteria: { email?: string; username?: string },
+    excludeId?: number,
+  ): Promise<User[]> {
+    const conditions: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (criteria.email) {
+      conditions.push('user.email = :email');
+      params.email = criteria.email.toLowerCase();
+    }
+    if (criteria.username) {
+      conditions.push('user.username = :username');
+      params.username = criteria.username;
+    }
+    if (!conditions.length) return Promise.resolve([]);
+
+    const qb = this.usersRepository
+      .createQueryBuilder('user')
+      .where(conditions.join(' OR '), params);
+    if (excludeId !== undefined) {
+      qb.andWhere('user.id != :excludeId', { excludeId });
+    }
+    return qb.getMany();
+  }
+
   async create(data: CreateUserDto): Promise<User> {
     const dto = plainToInstance(CreateUserDto, data);
     const errors = await validate(dto);

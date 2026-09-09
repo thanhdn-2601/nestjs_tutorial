@@ -34,3 +34,7 @@ npm-debug.log*
 
 # TypeScript v1 declaration files
 typings/
+
+# uploaded files
+/public/uploads/avatars/*
+!/public/uploads/avatars/.gitkeep
