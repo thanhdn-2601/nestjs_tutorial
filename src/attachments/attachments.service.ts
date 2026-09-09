@@ -6,10 +6,10 @@ import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { EntityManager, Repository } from 'typeorm';
+import { PUBLIC_DIR } from '../common/public-dir.constants';
+import { AttachmentIdentity } from './attachment-identity.interface';
 import { AttachableType, Attachment } from './attachment.entity';
 import { AttachAttachmentDto } from './dto/attach-attachment.dto';
-
-const PUBLIC_DIR = join(__dirname, '..', '..', 'public');
 
 @Injectable()
 export class AttachmentsService {
@@ -36,18 +36,21 @@ export class AttachmentsService {
     attachableType: AttachableType,
     attachableId: number,
     manager: EntityManager = this.attachmentsRepository.manager,
-  ): Promise<Attachment[]> {
-    return manager
-      .getRepository(Attachment)
-      .find({ where: { attachableType, attachableId } });
+  ): Promise<AttachmentIdentity[]> {
+    return manager.getRepository(Attachment).find({
+      where: { attachableType, attachableId },
+      select: { id: true, url: true },
+    });
   }
 
   async removeMany(
-    attachments: Attachment[],
+    attachments: AttachmentIdentity[],
     manager: EntityManager = this.attachmentsRepository.manager,
   ): Promise<void> {
     if (!attachments.length) return;
-    await manager.getRepository(Attachment).remove(attachments);
+    await manager
+      .getRepository(Attachment)
+      .delete(attachments.map((attachment) => attachment.id));
   }
 
   deleteFile(url: string): Promise<void> {

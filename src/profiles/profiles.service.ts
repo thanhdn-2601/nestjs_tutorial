@@ -10,15 +10,10 @@ import { isUniqueViolation } from '../common/postgres-errors';
 import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { Follow } from './follow.entity';
-
-export interface ProfileResponse {
-  profile: {
-    username: string;
-    bio: string;
-    image: string | null;
-    following: boolean;
-  };
-}
+import {
+  ProfileResponse,
+  UserWithFollowingRaw,
+} from './profile-response.interface';
 
 @Injectable()
 export class ProfilesService {
@@ -27,15 +22,34 @@ export class ProfilesService {
     private readonly i18n: I18nService,
     @InjectRepository(Follow)
     private readonly followsRepository: Repository<Follow>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
   ) {}
 
   async getProfile(
     username: string,
     currentUserId?: number,
   ): Promise<ProfileResponse> {
-    const user = await this.findUserOrFail(username);
-    const following = await this.isFollowing(currentUserId, user.id);
-    return this.buildProfileResponse(user, following);
+    const { entities, raw } = await this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoin(
+        'follows',
+        'follow',
+        'follow."followerId" = :currentUserId AND follow."followeeId" = user.id',
+        { currentUserId: currentUserId ?? null },
+      )
+      .addSelect('follow.id IS NOT NULL', 'following')
+      .where('user.username = :username', { username })
+      .getRawAndEntities<UserWithFollowingRaw>();
+
+    const user = entities[0];
+    if (!user) {
+      throw new NotFoundException({
+        errors: { username: [this.i18n.t('auth.user_not_found')] },
+      });
+    }
+
+    return this.buildProfileResponse(user, Boolean(raw[0].following));
   }
 
   async follow(
@@ -80,17 +94,6 @@ export class ProfilesService {
       });
     }
     return user;
-  }
-
-  private async isFollowing(
-    followerId: number | undefined,
-    followeeId: number,
-  ): Promise<boolean> {
-    if (!followerId) return false;
-    const follow = await this.followsRepository.findOne({
-      where: { followerId, followeeId },
-    });
-    return follow !== null;
   }
 
   private buildProfileResponse(

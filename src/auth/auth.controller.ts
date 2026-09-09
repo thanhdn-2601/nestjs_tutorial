@@ -23,7 +23,7 @@ import {
 import type { Request } from 'express';
 import type { User } from '../users/user.entity';
 import { AuthService } from './auth.service';
-import type { UserResponse } from './auth.service';
+import type { UserResponse } from './user-response.interface';
 import { avatarUploadOptions } from './avatar-upload.options';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';

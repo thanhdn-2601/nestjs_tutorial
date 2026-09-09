@@ -14,7 +14,8 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { User } from '../users/user.entity';
-import { ProfileResponse, ProfilesService } from './profiles.service';
+import { ProfileResponse } from './profile-response.interface';
+import { ProfilesService } from './profiles.service';
 
 @ApiTags('profiles')
 @Controller('profiles')

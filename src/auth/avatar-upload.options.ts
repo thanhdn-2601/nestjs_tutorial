@@ -2,20 +2,19 @@ import { BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import { extname } from 'path';
+import { AVATAR_UPLOADS_DIR } from '../common/public-dir.constants';
 import {
   ALLOWED_AVATAR_MIME_TYPES,
   MAX_AVATAR_SIZE_BYTES,
 } from './avatar-upload.constants';
 
-const AVATAR_DIR = join(__dirname, '..', '..', 'public', 'uploads', 'avatars');
-
-mkdirSync(AVATAR_DIR, { recursive: true });
+mkdirSync(AVATAR_UPLOADS_DIR, { recursive: true });
 
 export const avatarUploadOptions = {
   storage: diskStorage({
     destination: (_req, _file, callback) => {
-      callback(null, AVATAR_DIR);
+      callback(null, AVATAR_UPLOADS_DIR);
     },
     filename: (_req, file, callback) => {
       callback(null, `${randomUUID()}${extname(file.originalname)}`);

@@ -9,6 +9,7 @@ import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { I18nService } from 'nestjs-i18n';
 import { DataSource } from 'typeorm';
+import { AttachmentIdentity } from '../attachments/attachment-identity.interface';
 import { AttachableType } from '../attachments/attachment.entity';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { isUniqueViolation } from '../common/postgres-errors';
@@ -20,16 +21,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UpdateUserFieldsDto } from './dto/update-user.dto';
 import { JwtPayload } from './jwt-payload.interface';
-
-export interface UserResponse {
-  user: {
-    email: string;
-    token: string;
-    username: string;
-    bio: string;
-    image: string | null;
-  };
-}
+import { UserResponse } from './user-response.interface';
 
 @Injectable()
 export class AuthService {
@@ -43,15 +35,20 @@ export class AuthService {
   ) {}
 
   async register({ user }: RegisterDto): Promise<UserResponse> {
-    const [existingByEmail, existingByUsername] = await Promise.all([
-      this.usersService.findByEmail(user.email),
-      this.usersService.findByUsername(user.username),
-    ]);
+    const conflicts = await this.usersService.findConflicts({
+      email: user.email,
+      username: user.username,
+    });
 
     const errors: Record<string, string[]> = {};
-    if (existingByEmail) errors.email = [this.i18n.t('auth.email_taken')];
-    if (existingByUsername)
+    if (
+      conflicts.some((existing) => existing.email === user.email.toLowerCase())
+    ) {
+      errors.email = [this.i18n.t('auth.email_taken')];
+    }
+    if (conflicts.some((existing) => existing.username === user.username)) {
       errors.username = [this.i18n.t('auth.username_taken')];
+    }
     if (Object.keys(errors).length) {
       throw new UnprocessableEntityException({ errors });
     }
@@ -97,40 +94,51 @@ export class AuthService {
     user: User,
     file: Express.Multer.File,
   ): Promise<UserResponse> {
-    const { updated, stale } = await this.dataSource.transaction(
-      async (manager) => {
-        const lockedUser = await manager.findOneOrFail(User, {
-          where: { id: user.id },
-          lock: { mode: 'pessimistic_write' },
-        });
+    const uploadedUrl = `/uploads/avatars/${file.filename}`;
 
-        const attachment = await this.attachmentsService.attach(
-          {
-            attachableType: AttachableType.USER,
-            attachableId: lockedUser.id,
-            url: `/uploads/avatars/${file.filename}`,
-            fileName: file.originalname,
-            fileType: file.mimetype,
-            fileSize: file.size,
-          },
-          manager,
-        );
+    let updated: User;
+    let stale: AttachmentIdentity[];
+    try {
+      ({ updated, stale } = await this.dataSource.transaction(
+        async (manager) => {
+          const lockedUser = await manager.findOneOrFail(User, {
+            where: { id: user.id },
+            lock: { mode: 'pessimistic_write' },
+          });
 
-        const stale = (
-          await this.attachmentsService.findAllFor(
-            AttachableType.USER,
-            lockedUser.id,
+          const attachment = await this.attachmentsService.attach(
+            {
+              attachableType: AttachableType.USER,
+              attachableId: lockedUser.id,
+              url: uploadedUrl,
+              fileName: file.originalname,
+              fileType: file.mimetype,
+              fileSize: file.size,
+            },
             manager,
-          )
-        ).filter((existing) => existing.id !== attachment.id);
+          );
 
-        lockedUser.image = attachment.url;
-        const updated = await manager.save(lockedUser);
-        await this.attachmentsService.removeMany(stale, manager);
+          const stale = (
+            await this.attachmentsService.findAllFor(
+              AttachableType.USER,
+              lockedUser.id,
+              manager,
+            )
+          ).filter((existing) => existing.id !== attachment.id);
 
-        return { updated, stale };
-      },
-    );
+          lockedUser.image = attachment.url;
+          const updated = await manager.save(lockedUser);
+          await this.attachmentsService.removeMany(stale, manager);
+
+          return { updated, stale };
+        },
+      ));
+    } catch (error) {
+      await this.attachmentsService
+        .deleteFile(uploadedUrl)
+        .catch(() => undefined);
+      throw error;
+    }
 
     await Promise.all(
       stale.map((attachment) =>
@@ -150,17 +158,27 @@ export class AuthService {
     const emailChanged = !!dto.email && dto.email.toLowerCase() !== user.email;
     const usernameChanged = !!dto.username && dto.username !== user.username;
 
-    const [existingByEmail, existingByUsername] = await Promise.all([
-      emailChanged ? this.usersService.findByEmail(dto.email as string) : null,
-      usernameChanged
-        ? this.usersService.findByUsername(dto.username as string)
-        : null,
-    ]);
+    const conflicts = await this.usersService.findConflicts(
+      {
+        email: emailChanged ? dto.email : undefined,
+        username: usernameChanged ? dto.username : undefined,
+      },
+      user.id,
+    );
 
     const errors: Record<string, string[]> = {};
-    if (existingByEmail) errors.email = [this.i18n.t('auth.email_taken')];
-    if (existingByUsername)
+    if (
+      emailChanged &&
+      conflicts.some((existing) => existing.email === dto.email?.toLowerCase())
+    ) {
+      errors.email = [this.i18n.t('auth.email_taken')];
+    }
+    if (
+      usernameChanged &&
+      conflicts.some((existing) => existing.username === dto.username)
+    ) {
       errors.username = [this.i18n.t('auth.username_taken')];
+    }
     if (Object.keys(errors).length) {
       throw new UnprocessableEntityException({ errors });
     }
