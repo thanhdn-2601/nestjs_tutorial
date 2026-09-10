@@ -96,6 +96,32 @@ export class ProfilesService {
     return user;
   }
 
+  async getUsersWithFollowing(
+    userIds: number[],
+    currentUserId?: number,
+  ): Promise<Map<number, { user: User; following: boolean }>> {
+    if (!userIds.length) return new Map();
+
+    const { entities, raw } = await this.usersRepository
+      .createQueryBuilder('user')
+      .select(['user.id', 'user.username', 'user.bio', 'user.image'])
+      .leftJoin(
+        'follows',
+        'follow',
+        'follow."followerId" = :currentUserId AND follow."followeeId" = user.id',
+        { currentUserId: currentUserId ?? null },
+      )
+      .addSelect('follow.id IS NOT NULL', 'following')
+      .where('user.id IN (:...userIds)', { userIds })
+      .getRawAndEntities<UserWithFollowingRaw>();
+
+    const result = new Map<number, { user: User; following: boolean }>();
+    entities.forEach((user, index) => {
+      result.set(user.id, { user, following: Boolean(raw[index].following) });
+    });
+    return result;
+  }
+
   private buildProfileResponse(
     user: User,
     following: boolean,

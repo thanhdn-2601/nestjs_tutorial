@@ -5,6 +5,7 @@ import { join } from 'path';
 import { AcceptLanguageResolver, I18nModule, QueryResolver } from 'nestjs-i18n';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ArticlesModule } from './articles/articles.module';
 import { AuthModule } from './auth/auth.module';
 import { UPLOADS_DIR } from './common/public-dir.constants';
 import { DatabaseModule } from './database/database.module';
@@ -32,6 +33,7 @@ import { RedisModule } from './redis/redis.module';
     RedisModule,
     AuthModule,
     ProfilesModule,
+    ArticlesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
