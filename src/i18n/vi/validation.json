@@ -8,5 +8,6 @@
   "is_array": "{property} phải là một mảng",
   "is_int": "{property} phải là số nguyên",
   "min": "{property} không được nhỏ hơn {constraints.0}",
-  "max": "{property} không được lớn hơn {constraints.0}"
+  "max": "{property} không được lớn hơn {constraints.0}",
+  "array_max_size": "{property} không được chứa quá {constraints.0} phần tử"
 }

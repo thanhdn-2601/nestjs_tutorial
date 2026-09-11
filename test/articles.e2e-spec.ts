@@ -144,6 +144,22 @@ describe('Articles (e2e)', () => {
         });
     });
 
+    it('returns 422 when the title is too long', () => {
+      return request(app.getHttpServer())
+        .post('/articles')
+        .set('Authorization', `Token ${authorToken}`)
+        .send({
+          article: { title: 'a'.repeat(256), description: 'd', body: 'b' },
+        })
+        .expect(422)
+        .expect((res) => {
+          const body = res.body as ErrorsResponseBody;
+          expect(body.errors.title).toContain(
+            'title must be shorter than or equal to 255 characters',
+          );
+        });
+    });
+
     it('slugifies a Vietnamese title into readable ASCII', () => {
       return request(app.getHttpServer())
         .post('/articles')
@@ -303,6 +319,20 @@ describe('Articles (e2e)', () => {
             const body = res.body as ErrorsResponseBody;
             expect(body.errors.article).toContain(
               'you are not the author of this article',
+            );
+          });
+      });
+
+      it('returns 422 when the title is too long', () => {
+        return request(app.getHttpServer())
+          .put(`/articles/${slug}`)
+          .set('Authorization', `Token ${authorToken}`)
+          .send({ article: { title: 'a'.repeat(256) } })
+          .expect(422)
+          .expect((res) => {
+            const body = res.body as ErrorsResponseBody;
+            expect(body.errors.title).toContain(
+              'title must be shorter than or equal to 255 characters',
             );
           });
       });

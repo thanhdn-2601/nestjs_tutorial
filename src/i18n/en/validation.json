@@ -8,5 +8,6 @@
   "is_array": "{property} must be an array",
   "is_int": "{property} must be an integer number",
   "min": "{property} must not be less than {constraints.0}",
-  "max": "{property} must not be greater than {constraints.0}"
+  "max": "{property} must not be greater than {constraints.0}",
+  "array_max_size": "{property} must contain no more than {constraints.0} elements"
 }
