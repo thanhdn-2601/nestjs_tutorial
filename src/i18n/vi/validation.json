@@ -4,5 +4,10 @@
   "is_string": "{property} phải là chuỗi ký tự",
   "is_email": "{property} phải là email hợp lệ",
   "min_length": "{property} phải dài tối thiểu {constraints.0} ký tự",
-  "max_length": "{property} phải dài tối đa {constraints.0} ký tự"
+  "max_length": "{property} phải dài tối đa {constraints.0} ký tự",
+  "is_array": "{property} phải là một mảng",
+  "is_int": "{property} phải là số nguyên",
+  "min": "{property} không được nhỏ hơn {constraints.0}",
+  "max": "{property} không được lớn hơn {constraints.0}",
+  "array_max_size": "{property} không được chứa quá {constraints.0} phần tử"
 }
