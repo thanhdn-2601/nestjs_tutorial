@@ -134,7 +134,7 @@ export class ArticlesService {
     slug: string,
     currentUserId?: number,
   ): Promise<ArticleResponse> {
-    const article = await this.findArticleOrFail(slug);
+    const article = await this.findBySlugOrFail(slug);
     return this.buildArticleResponse(article, currentUserId);
   }
 
@@ -175,7 +175,7 @@ export class ArticlesService {
     currentUserId: number,
     slug: string,
   ): Promise<ArticleResponse> {
-    const article = await this.findArticleOrFail(slug);
+    const article = await this.findBySlugOrFail(slug);
     try {
       await this.articleFavoritesRepository.insert({
         userId: currentUserId,
@@ -191,7 +191,7 @@ export class ArticlesService {
     currentUserId: number,
     slug: string,
   ): Promise<ArticleResponse> {
-    const article = await this.findArticleOrFail(slug);
+    const article = await this.findBySlugOrFail(slug);
     await this.articleFavoritesRepository.delete({
       userId: currentUserId,
       articleId: article.id,
@@ -235,7 +235,7 @@ export class ArticlesService {
     };
   }
 
-  private async findArticleOrFail(slug: string): Promise<Article> {
+  async findBySlugOrFail(slug: string): Promise<Article> {
     const article = await this.articlesRepository.findOne({
       where: { slug },
     });

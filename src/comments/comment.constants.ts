@@ -1,0 +1,1 @@
+export const COMMENT_BODY_MAX_LENGTH = 5000;
