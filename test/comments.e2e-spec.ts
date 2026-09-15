@@ -1,13 +1,22 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { validationExceptionFactory } from './../src/common/validation-exception-factory';
+import { Article } from './../src/articles/article.entity';
 import { AppModule } from './../src/app.module';
 import { Comment } from './../src/comments/comment.entity';
 import { User } from './../src/users/user.entity';
+import { truncateAllTables } from './utils/database-cleaner';
+import {
+  seedArticle,
+  seedComment,
+  seedUser,
+  signAccessToken,
+} from './utils/fixtures';
 
 interface ErrorsResponseBody {
   errors: Record<string, string[]>;
@@ -27,28 +36,13 @@ interface CommentsResponseBody {
   comments: CommentResponseBody['comment'][];
 }
 
-interface UserResponseBody {
-  user: { token: string };
-}
-
-interface ArticleResponseBody {
-  article: { slug: string };
-}
-
 describe('Comments (e2e)', () => {
   let app: INestApplication<App>;
+  let dataSource: DataSource;
+  let jwtService: JwtService;
   let usersRepository: Repository<User>;
+  let articlesRepository: Repository<Article>;
   let commentsRepository: Repository<Comment>;
-
-  const password = 'password123';
-  const authorEmail = `e2e_c_author_${Date.now()}@example.com`;
-  const authorUsername = `e2e_c_author_${Date.now()}`;
-  const otherEmail = `e2e_c_other_${Date.now()}@example.com`;
-  const otherUsername = `e2e_c_other_${Date.now()}`;
-
-  let authorToken: string;
-  let otherToken: string;
-  let slug: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -65,213 +59,257 @@ describe('Comments (e2e)', () => {
     );
     await app.init();
 
+    dataSource = moduleFixture.get(DataSource);
+    jwtService = moduleFixture.get(JwtService);
     usersRepository = moduleFixture.get<Repository<User>>(
       getRepositoryToken(User),
+    );
+    articlesRepository = moduleFixture.get<Repository<Article>>(
+      getRepositoryToken(Article),
     );
     commentsRepository = moduleFixture.get<Repository<Comment>>(
       getRepositoryToken(Comment),
     );
+  });
 
-    const [authorRes, otherRes] = await Promise.all([
-      request(app.getHttpServer())
-        .post('/users')
-        .send({
-          user: { username: authorUsername, email: authorEmail, password },
-        }),
-      request(app.getHttpServer())
-        .post('/users')
-        .send({
-          user: { username: otherUsername, email: otherEmail, password },
-        }),
-    ]);
-    authorToken = (authorRes.body as UserResponseBody).user.token;
-    otherToken = (otherRes.body as UserResponseBody).user.token;
-
-    const articleRes = await request(app.getHttpServer())
-      .post('/articles')
-      .set('Authorization', `Token ${authorToken}`)
-      .send({
-        article: {
-          title: `Comment Fixture ${Date.now()}`,
-          description: 'd',
-          body: 'b',
-        },
-      });
-    slug = (articleRes.body as ArticleResponseBody).article.slug;
+  afterEach(async () => {
+    await truncateAllTables(dataSource);
   });
 
   afterAll(async () => {
-    // comments cascade-delete via the users FK
-    await usersRepository.delete({ email: authorEmail });
-    await usersRepository.delete({ email: otherEmail });
     await app.close();
   });
 
   describe('POST /articles/:slug/comments', () => {
-    it('returns 401 without a token', () => {
-      return request(app.getHttpServer())
-        .post(`/articles/${slug}/comments`)
-        .send({ comment: { body: 'nice article' } })
+    it('creates a comment authored by the caller and persists it', async () => {
+      const author = await seedUser(usersRepository);
+      const commenter = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const token = signAccessToken(jwtService, commenter);
+
+      const res = await request(app.getHttpServer())
+        .post(`/articles/${article.slug}/comments`)
+        .set('Authorization', `Token ${token}`)
+        .send({ comment: { body: 'Great article, thanks!' } })
+        .expect(201);
+
+      const body = res.body as CommentResponseBody;
+      expect(body.comment).toMatchObject({
+        body: 'Great article, thanks!',
+        author: { username: commenter.username, following: false },
+      });
+      expect(body.comment.id).toEqual(expect.any(Number));
+
+      const stored = await commentsRepository.findOne({
+        where: { articleId: article.id },
+      });
+      expect(stored?.authorId).toBe(commenter.id);
+      expect(stored?.body).toBe('Great article, thanks!');
+    });
+
+    it('returns 401 without a token', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+
+      await request(app.getHttpServer())
+        .post(`/articles/${article.slug}/comments`)
+        .send({ comment: { body: 'nice' } })
         .expect(401);
+    });
+
+    it('returns 404 when the article does not exist', async () => {
+      const commenter = await seedUser(usersRepository);
+      const token = signAccessToken(jwtService, commenter);
+
+      const res = await request(app.getHttpServer())
+        .post('/articles/no-such-slug-xyz/comments')
+        .set('Authorization', `Token ${token}`)
+        .send({ comment: { body: 'nice' } })
+        .expect(404);
+
+      expect((res.body as ErrorsResponseBody).errors.slug).toContain(
+        'was not found',
+      );
+    });
+
+    it('returns 422 for a whitespace-only body', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const token = signAccessToken(jwtService, author);
+
+      const res = await request(app.getHttpServer())
+        .post(`/articles/${article.slug}/comments`)
+        .set('Authorization', `Token ${token}`)
+        .send({ comment: { body: '   ' } })
+        .expect(422);
+
+      expect((res.body as ErrorsResponseBody).errors.body).toContain(
+        'body should not be empty',
+      );
+    });
+  });
+
+  describe('GET /articles/:slug/comments', () => {
+    it('returns comments newest-first', async () => {
+      const author = await seedUser(usersRepository);
+      const reader = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const first = await seedComment(commentsRepository, article, author, {
+        body: 'first comment',
+      });
+      const second = await seedComment(commentsRepository, article, reader, {
+        body: 'second comment',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/articles/${article.slug}/comments`)
+        .expect(200);
+
+      const body = res.body as CommentsResponseBody;
+      expect(body.comments.map((c) => c.id)).toEqual([second.id, first.id]);
+      expect(body.comments.every((c) => c.author.following === false)).toBe(
+        true,
+      );
+    });
+
+    it('reflects the following flag for the authenticated caller', async () => {
+      const author = await seedUser(usersRepository);
+      const reader = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      await seedComment(commentsRepository, article, author);
+      const readerToken = signAccessToken(jwtService, reader);
+
+      await request(app.getHttpServer())
+        .post(`/profiles/${author.username}/follow`)
+        .set('Authorization', `Token ${readerToken}`)
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get(`/articles/${article.slug}/comments`)
+        .set('Authorization', `Token ${readerToken}`)
+        .expect(200);
+
+      const body = res.body as CommentsResponseBody;
+      expect(body.comments[0].author.following).toBe(true);
+    });
+
+    it('returns an empty list for an article with no comments', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+
+      const res = await request(app.getHttpServer())
+        .get(`/articles/${article.slug}/comments`)
+        .expect(200);
+
+      expect((res.body as CommentsResponseBody).comments).toEqual([]);
     });
 
     it('returns 404 for a slug that does not exist', () => {
       return request(app.getHttpServer())
-        .post('/articles/no-such-slug-xyz/comments')
-        .set('Authorization', `Token ${authorToken}`)
-        .send({ comment: { body: 'nice article' } })
-        .expect(404)
-        .expect((res) => {
-          const body = res.body as ErrorsResponseBody;
-          expect(body.errors.slug).toContain('was not found');
-        });
-    });
-
-    it('returns 422 for an empty body', () => {
-      return request(app.getHttpServer())
-        .post(`/articles/${slug}/comments`)
-        .set('Authorization', `Token ${authorToken}`)
-        .send({ comment: { body: '   ' } })
-        .expect(422)
-        .expect((res) => {
-          const body = res.body as ErrorsResponseBody;
-          expect(body.errors.body).toContain('body should not be empty');
-        });
-    });
-
-    it('creates a comment authored by the caller', () => {
-      return request(app.getHttpServer())
-        .post(`/articles/${slug}/comments`)
-        .set('Authorization', `Token ${otherToken}`)
-        .send({ comment: { body: 'Great read, thanks!' } })
-        .expect(201)
-        .expect((res) => {
-          const body = res.body as CommentResponseBody;
-          expect(body.comment.body).toBe('Great read, thanks!');
-          expect(body.comment.author.username).toBe(otherUsername);
-          expect(body.comment.id).toEqual(expect.any(Number));
-        });
+        .get('/articles/no-such-slug-xyz/comments')
+        .expect(404);
     });
   });
 
-  describe('with existing comments', () => {
-    let authorCommentId: number;
-    let otherCommentId: number;
+  describe('DELETE /articles/:slug/comments/:id', () => {
+    it("deletes the caller's own comment", async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const comment = await seedComment(commentsRepository, article, author);
+      const token = signAccessToken(jwtService, author);
 
-    beforeAll(async () => {
-      const [authorRes, otherRes] = await Promise.all([
-        request(app.getHttpServer())
-          .post(`/articles/${slug}/comments`)
-          .set('Authorization', `Token ${authorToken}`)
-          .send({ comment: { body: 'From the author' } }),
-        request(app.getHttpServer())
-          .post(`/articles/${slug}/comments`)
-          .set('Authorization', `Token ${otherToken}`)
-          .send({ comment: { body: 'From the other user' } }),
-      ]);
-      authorCommentId = (authorRes.body as CommentResponseBody).comment.id;
-      otherCommentId = (otherRes.body as CommentResponseBody).comment.id;
+      await request(app.getHttpServer())
+        .delete(`/articles/${article.slug}/comments/${comment.id}`)
+        .set('Authorization', `Token ${token}`)
+        .expect(204);
+
+      expect(
+        await commentsRepository.findOne({ where: { id: comment.id } }),
+      ).toBeNull();
+
+      const res = await request(app.getHttpServer())
+        .get(`/articles/${article.slug}/comments`)
+        .expect(200);
+      expect(
+        (res.body as CommentsResponseBody).comments.map((c) => c.id),
+      ).not.toContain(comment.id);
     });
 
-    describe('GET /articles/:slug/comments', () => {
-      it('returns 404 for a slug that does not exist', () => {
-        return request(app.getHttpServer())
-          .get('/articles/no-such-slug-xyz/comments')
-          .expect(404);
-      });
+    it('returns 401 without a token', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const comment = await seedComment(commentsRepository, article, author);
 
-      it('lists comments for an anonymous request', () => {
-        return request(app.getHttpServer())
-          .get(`/articles/${slug}/comments`)
-          .expect(200)
-          .expect((res) => {
-            const body = res.body as CommentsResponseBody;
-            expect(body.comments.length).toBeGreaterThanOrEqual(2);
-            const ids = body.comments.map((comment) => comment.id);
-            expect(ids).toContain(authorCommentId);
-            expect(ids).toContain(otherCommentId);
-            expect(
-              body.comments.every(
-                (comment) => comment.author.following === false,
-              ),
-            ).toBe(true);
-          });
-      });
-
-      it('reflects the following flag for an authenticated request', async () => {
-        await request(app.getHttpServer())
-          .post(`/profiles/${authorUsername}/follow`)
-          .set('Authorization', `Token ${otherToken}`);
-
-        const res = await request(app.getHttpServer())
-          .get(`/articles/${slug}/comments`)
-          .set('Authorization', `Token ${otherToken}`)
-          .expect(200);
-        const body = res.body as CommentsResponseBody;
-        const authorComment = body.comments.find(
-          (comment) => comment.id === authorCommentId,
-        );
-        expect(authorComment?.author.following).toBe(true);
-
-        await request(app.getHttpServer())
-          .delete(`/profiles/${authorUsername}/follow`)
-          .set('Authorization', `Token ${otherToken}`);
-      });
+      await request(app.getHttpServer())
+        .delete(`/articles/${article.slug}/comments/${comment.id}`)
+        .expect(401);
     });
 
-    describe('DELETE /articles/:slug/comments/:id', () => {
-      it('returns 401 without a token', () => {
-        return request(app.getHttpServer())
-          .delete(`/articles/${slug}/comments/${otherCommentId}`)
-          .expect(401);
-      });
+    it('returns 403 when the caller is not the comment author', async () => {
+      const author = await seedUser(usersRepository);
+      const other = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const comment = await seedComment(commentsRepository, article, author);
+      const otherToken = signAccessToken(jwtService, other);
 
-      it('returns 404 for a comment id that does not exist', () => {
-        return request(app.getHttpServer())
-          .delete(`/articles/${slug}/comments/999999999`)
-          .set('Authorization', `Token ${otherToken}`)
-          .expect(404);
-      });
+      const res = await request(app.getHttpServer())
+        .delete(`/articles/${article.slug}/comments/${comment.id}`)
+        .set('Authorization', `Token ${otherToken}`)
+        .expect(403);
 
-      it('returns 404 (not a silent id coercion) for a non-numeric id', () => {
-        return request(app.getHttpServer())
-          .delete(`/articles/${slug}/comments/0x1`)
-          .set('Authorization', `Token ${otherToken}`)
-          .expect(404);
-      });
+      expect((res.body as ErrorsResponseBody).errors.comment).toContain(
+        'you are not the author of this comment',
+      );
 
-      it('returns 403 when the caller is not the comment author', () => {
-        return request(app.getHttpServer())
-          .delete(`/articles/${slug}/comments/${otherCommentId}`)
-          .set('Authorization', `Token ${authorToken}`)
-          .expect(403)
-          .expect((res) => {
-            const body = res.body as ErrorsResponseBody;
-            expect(body.errors.comment).toContain(
-              'you are not the author of this comment',
-            );
-          });
-      });
+      expect(
+        await commentsRepository.findOne({ where: { id: comment.id } }),
+      ).not.toBeNull();
+    });
 
-      it("deletes the caller's own comment", async () => {
-        await request(app.getHttpServer())
-          .delete(`/articles/${slug}/comments/${otherCommentId}`)
-          .set('Authorization', `Token ${otherToken}`)
-          .expect(204);
+    it('returns 404 for a comment id that does not exist', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const token = signAccessToken(jwtService, author);
 
-        const remaining = await commentsRepository.findOne({
-          where: { id: otherCommentId },
-        });
-        expect(remaining).toBeNull();
+      await request(app.getHttpServer())
+        .delete(`/articles/${article.slug}/comments/999999999`)
+        .set('Authorization', `Token ${token}`)
+        .expect(404);
+    });
 
-        const res = await request(app.getHttpServer()).get(
-          `/articles/${slug}/comments`,
-        );
-        const body = res.body as CommentsResponseBody;
-        expect(body.comments.map((comment) => comment.id)).not.toContain(
-          otherCommentId,
-        );
-      });
+    it('returns 404 (not a silent id coercion) for a non-numeric id', async () => {
+      const author = await seedUser(usersRepository);
+      const article = await seedArticle(articlesRepository, author);
+      const comment = await seedComment(commentsRepository, article, author);
+      const token = signAccessToken(jwtService, author);
+
+      await request(app.getHttpServer())
+        .delete(
+          `/articles/${article.slug}/comments/0x${comment.id.toString(16)}`,
+        )
+        .set('Authorization', `Token ${token}`)
+        .expect(404);
+
+      expect(
+        await commentsRepository.findOne({ where: { id: comment.id } }),
+      ).not.toBeNull();
+    });
+
+    it('returns 404 when the comment belongs to a different article', async () => {
+      const author = await seedUser(usersRepository);
+      const articleA = await seedArticle(articlesRepository, author);
+      const articleB = await seedArticle(articlesRepository, author);
+      const comment = await seedComment(commentsRepository, articleA, author);
+      const token = signAccessToken(jwtService, author);
+
+      await request(app.getHttpServer())
+        .delete(`/articles/${articleB.slug}/comments/${comment.id}`)
+        .set('Authorization', `Token ${token}`)
+        .expect(404);
+
+      expect(
+        await commentsRepository.findOne({ where: { id: comment.id } }),
+      ).not.toBeNull();
     });
   });
 });
