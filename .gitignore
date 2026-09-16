@@ -12,6 +12,7 @@ npm-debug.log*
 
 # Env
 .env
+.env.test
 
 # IDE
 .idea

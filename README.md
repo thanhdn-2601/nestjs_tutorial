@@ -46,6 +46,18 @@ $ npm run start:prod
 
 ## Run tests
 
+E2e tests run against a dedicated `nestjs_tutorial_test` database (separate from
+your dev database), configured via `.env.test`. Before running them the first time:
+
+```bash
+$ cp .env.test.example .env.test
+# fill in .env.test the same way you filled in .env
+```
+
+`npm run test:e2e` automatically creates the test database and runs migrations
+against it (via a `pretest:e2e` hook) before each run, so no other manual setup
+is required.
+
 ```bash
 # unit tests
 $ npm run test

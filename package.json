@@ -17,12 +17,15 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "pretest:e2e": "npm run db:test:create && npm run migration:run:test",
+    "test:e2e": "NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand",
     "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
     "migration:generate": "npm run typeorm -- migration:generate",
     "migration:create": "typeorm-ts-node-commonjs migration:create",
     "migration:run": "npm run typeorm -- migration:run",
-    "migration:revert": "npm run typeorm -- migration:revert"
+    "migration:revert": "npm run typeorm -- migration:revert",
+    "migration:run:test": "NODE_ENV=test npm run typeorm -- migration:run",
+    "db:test:create": "docker exec nestjs_tutorial_db psql -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = 'nestjs_tutorial_test'\" | grep -q 1 || docker exec nestjs_tutorial_db psql -U postgres -c \"CREATE DATABASE nestjs_tutorial_test\""
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -49,6 +52,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
+    "@faker-js/faker": "^8.4.1",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
